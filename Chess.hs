@@ -1,5 +1,5 @@
 -- Welcome to my attempt at coding chess within haskell.
-
+-- 
 {-
 
  ___ ___ ___ ___ ___ ___ ___ ___ 
@@ -165,3 +165,4 @@ showCell (cell, Just piece) = "| " ++ show piece ++ " "
 
 initial :: GameState
 initial = createGame generateGameBoard initialPositions
+
