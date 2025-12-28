@@ -1,37 +1,9 @@
 -- Welcome to my attempt at coding chess within haskell.
--- 
-{-
-
- ___ ___ ___ ___ ___ ___ ___ ___ 
-|   |   |   |   | ^ |   |   |   |
-| r | k | b | q | k | b | k | r |
-|___|___|___|___|___|___|___|___|
-|   |   |   |   |   |   |   |   |
-| p | p | p | p | p | p | p | p |
-|___|___|___|___|___|___|___|___|
-|   |   |   |   |   |   |   |   |
-|   |   |   |   |   |   |   |   |
-|___|___|___|___|___|___|___|___|
-|   |   |   |   |   |   |   |   |
-|   |   |   |   |   |   |   |   |
-|___|___|___|___|___|___|___|___|
-|   |   |   |   |   |   |   |   |
-|   |   |   |   |   |   |   |   |
-|___|___|___|___|___|___|___|___|
-|   |   |   |   |   |   |   |   |
-|   |   |   |   |   |   |   |   |
-|___|___|___|___|___|___|___|___|
-|   |   |   |   |   |   |   |   |
-| P | P | P | P | P | P | P | P |
-|___|___|___|___|___|___|___|___|
-|   |   |   |   | ^ |   |   |   |
-| R | K | B | Q | K | B | K | R |
-|___|___|___|___|___|___|___|___|
-
--}
 
 -- Warning ignorations set throughout the project.
 {-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
+import Data.ByteString (find)
+import Data.IntMap (insert)
 {-# HLINT ignore "Use newtype instead of data" #-}
 {-# HLINT ignore "Use foldr" #-}
 
@@ -65,7 +37,7 @@ selectPlayer n = if even n then White else Black
 
 -- Pieces code
 type Pieces = [Piece Players Moves Cell]
-type GameState = [[(Cell, Maybe (Piece Players Moves Cell))]]
+type GameState = ([[(Cell, Maybe (Piece Players Moves Cell))]], Moves)
 
 instance Show (Piece Players Moves Cell) where
     show (Pawn White _ _) = "P"
@@ -118,7 +90,7 @@ initialPositions = [Rook Black 0 ('A',8),
 
 -- Create a board state
 createGame :: GameBoard -> Pieces -> GameState
-createGame board pieces = split (createGameState board pieces)
+createGame board pieces = (split (createGameState board pieces), 0)
 
 createGameState :: GameBoard -> Pieces -> [(Cell, Maybe (Piece Players Moves Cell))]
 createGameState [] _ = []
@@ -152,8 +124,8 @@ printGameState :: GameState -> IO ()
 printGameState gs = putStrLn (rowDivider++ showGameState gs)
 
 showGameState :: GameState -> String
-showGameState [] = ""
-showGameState (x:xs) = "\n" ++ showRow x ++ rowDividerAlt ++ showGameState xs
+showGameState ([], _) = ""
+showGameState (x:xs, moves) = "\n" ++ showRow x ++ rowDividerAlt ++ showGameState (xs, moves)
 
 showRow :: [(Cell, Maybe (Piece Players Moves Cell))] -> String
 showRow [] = "|\n"
@@ -166,3 +138,79 @@ showCell (cell, Just piece) = "| " ++ show piece ++ " "
 initial :: GameState
 initial = createGame generateGameBoard initialPositions
 
+-- Code where given a move, the game state is updated accordingly
+updateGameState :: GameState -> Cell -> Cell -> GameState
+updateGameState gs from to = case pickUpPiece gs from of
+                                (Left piece, (board', moves)) -> (if validCell to then insertPiece (board', moves+1) to piece else gs) -- If invalid cell, return the same game state
+                                (Right msg, gs') -> gs -- If no piece found, return the same game state
+
+pickUpPiece :: GameState -> Cell -> (Either (Piece Players Moves Cell) String, GameState)
+pickUpPiece gs cell = case storePiece gs cell of
+                        Right m -> (Right m, gs)
+                        Left p -> (Left p, removePieceFromSquare gs cell)
+
+removePieceFromSquare :: GameState -> Cell -> GameState
+removePieceFromSquare ([], moves) _ = ([], moves)
+removePieceFromSquare (board, moves) cell | ry == ry' = (fst (editRow (row, moves) cell) : rest, moves)
+                                          | otherwise = (row : fst (removePieceFromSquare (rest, moves) cell), moves)
+    where
+        (row:rest) = board -- Split the board into the first row and the rest
+        (c:cs) = row -- split the row into the first celland the rest
+        (cx, ry) = fst c -- split the cell into the tuple that holds the column and row
+        (cx', ry') = cell -- split the target cell into the tuple that holds the column and row
+
+editRow :: ([(Cell, Maybe (Piece Players Moves Cell))], Moves) -> Cell -> ([(Cell, Maybe (Piece Players Moves Cell))], Moves)
+editRow ([], moves) _ = ([], moves)
+editRow (row, moves) cell | cx == cx' = ((fst c, Nothing) : cs, moves)
+                          | otherwise = (c : fst (editRow (cs, moves) cell), moves)
+    where
+        (c:cs) = row -- split the row into the first celland the rest
+        (cx, ry) = fst c -- split the cell into the tuple that holds the column and row
+        (cx', ry') = cell -- split the target cell into the tuple that holds the column and row
+        piece = snd c -- get the piece at the current cell 
+
+storePiece :: GameState -> Cell -> Either (Piece Players Moves Cell) String
+storePiece ([], moves) _ = Right "Cell not found"
+storePiece (board, moves) cell | ry == ry' = findPiece row cell
+                               | otherwise = storePiece (rest, moves) cell
+    where
+        (row:rest) = board -- Split the board into the first row and the rest
+        (c:cs) = row -- split the row into the first celland the rest
+        (cx, ry) = fst c -- split the cell into the tuple that holds the column and row
+        (cx', ry') = cell -- split the target cell into the tuple that holds the column and row
+
+findPiece :: [(Cell, Maybe (Piece Players Moves Cell))] -> Cell -> Either (Piece Players Moves Cell) String
+findPiece [] _ = Right "Cell not found"
+findPiece row cell = if cx == cx'
+                        then
+                            case piece of
+                                Just p -> Left p
+                                Nothing -> Right "No piece found at first cell"
+                        else findPiece cs cell
+    where
+        (c:cs) = row -- split the row into the first celland the rest
+        (cx, ry) = fst c -- split the cell into the tuple that holds the column and row
+        (cx', ry') = cell -- split the target cell into the tuple that holds the column and row
+        piece = snd c -- get the piece at the current cell 
+
+insertPiece :: GameState -> Cell -> Piece Players Moves Cell -> GameState
+insertPiece ([], moves) _ _ = ([], moves)
+insertPiece (board, moves) cell piece | ry == ry' = (fst (editRowInsert (row, moves) cell piece) : rest, moves)
+                                      | otherwise = (row : fst (insertPiece (rest, moves) cell piece), moves)
+    where
+        (row:rest) = board -- Split the board into the first row and the rest
+        (c:cs) = row -- split the row into the first celland the rest
+        (cx, ry) = fst c -- split the cell into the tuple that holds the column and row
+        (cx', ry') = cell -- split the target cell into the tuple that holds the column and row
+
+editRowInsert :: ([(Cell, Maybe (Piece Players Moves Cell))], Moves) -> Cell -> Piece Players Moves Cell -> ([(Cell, Maybe (Piece Players Moves Cell))], Moves)
+editRowInsert ([], moves) _ _ = ([], moves)
+editRowInsert (row, moves) cell piece | cx == cx' = ((fst c, Just piece) : cs, moves)
+                                      | otherwise = (c : fst (editRowInsert (cs, moves) cell piece), moves)
+    where
+        (c:cs) = row -- split the row into the first celland the rest
+        (cx, ry) = fst c -- split the cell into the tuple that holds the column and row
+        (cx', ry') = cell -- split the target cell into the tuple that holds the column and row 
+
+validCell :: Cell -> Bool
+validCell (c, r) = c `elem` ['A'..'H'] && r `elem` [1..8]
