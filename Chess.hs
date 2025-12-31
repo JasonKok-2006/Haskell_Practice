@@ -4,6 +4,8 @@
 {-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
 {-# HLINT ignore "Use list comprehension" #-}
 {-# HLINT ignore "Use record patterns" #-}
+{-# HLINT ignore "Eta reduce" #-}
+{-# HLINT ignore "Redundant if" #-}
 import Data.ByteString (find)
 import Data.IntMap (insert)
 import System.FilePath (isValid)
@@ -339,7 +341,7 @@ validKnightMovesSetup gs (c, r) = validKnightMoves gs [(changingChar c 1, r + 2)
                                                        (changingChar c (-2), r - 1),
                                                        (changingChar c (-2), r + 1),
                                                        (changingChar c (-1), r + 2)]
-                                                       
+
 validKnightMoves :: GameState -> [Cell] -> [Cell]
 validKnightMoves gs [] = []
 validKnightMoves gs ((c, r): rest) = if validCell (c, r)
@@ -415,7 +417,7 @@ pawnAttackRightBlack (board, moves) (c, r) = case storePiece (board, moves) (cha
                                                 else []
                                     Left p -> if not (belongsToCurrentPlayer (board, moves) p)
                                                 then [(changingChar c 1, r - 1)]
-                                                else [] 
+                                                else []
 
 pawnAttackLeftBlack :: GameState -> Cell -> [Cell]
 pawnAttackLeftBlack (board, moves) (c, r) = case storePiece (board, moves) (changingChar c (-1), r - 1) of
@@ -426,9 +428,119 @@ pawnAttackLeftBlack (board, moves) (c, r) = case storePiece (board, moves) (chan
                                                 else []
                                     Left p -> if not (belongsToCurrentPlayer (board, moves) p)
                                                 then [(changingChar c (-1), r - 1)]
-                                                else [] 
+                                                else []
 
 -- check and checkmate
+-- Checking for check
+moveResultsInCheck :: GameState -> Cell -> Bool
+moveResultsInCheck gs from = canReachKing gs (storePiece gs from) from (findOpponentKing gs)
+
+canReachKing :: GameState -> Either (Piece Players Moves Cell) String -> Cell -> Cell -> Bool
+canReachKing gs piece from to = case piece of
+                                    Left p -> to `elem` validMoves gs p from
+                                    Right _ -> False
+
+findKing :: GameState -> Cell
+findKing ([], _) = error "King not found"
+findKing (board, moves) | fst (kingInRow row moves) = snd (kingInRow row moves)
+                        | otherwise = findKing (rest, moves)
+    where
+        (row:rest) = board -- Split the board into the first row and the rest
+
+kingInRow :: [(Cell, Maybe (Piece Players Moves Cell))] -> Moves -> (Bool, Cell)
+kingInRow [] _ = (False, ('Z', 0)) -- This case should never happen
+kingInRow (x:xs) moves = case snd x of
+                    Just (King player _ _) -> if player == selectPlayer moves then (True, fst x) else kingInRow xs moves
+                    _ -> kingInRow xs moves
+
+findOpponentKing :: GameState -> Cell
+findOpponentKing ([], _) = error "King not found"
+findOpponentKing (board, moves) | fst (opponentKingInRow row moves) = snd (opponentKingInRow row moves)
+                                | otherwise = findOpponentKing (rest, moves)
+    where
+        (row:rest) = board -- Split the board into the first row and the rest
+
+opponentKingInRow :: [(Cell, Maybe (Piece Players Moves Cell))] -> Moves -> (Bool, Cell)
+opponentKingInRow [] _ = (False, ('Z', 0)) -- This case should never happen
+opponentKingInRow (x:xs) moves = case snd x of
+                    Just (King player _ _) -> if player /= selectPlayer moves then (True, fst x) else opponentKingInRow xs moves
+                    _ -> opponentKingInRow xs moves
+
+-- Check for if a move would reult in check on your own king
+
+discoveredCheck :: GameState -> Cell -> Bool
+discoveredCheck gs pieceCell = isItInLineWithKing gs pieceCell && newCheckDetected gs direction
+    where
+        kingCell = findOpponentKing gs
+        positionDifference = decipherPositionDifference kingCell pieceCell
+        direction = decipherDirectionDifference positionDifference
+
+isItInLineWithKing :: GameState -> Cell -> Bool
+isItInLineWithKing gs pieceCell = pieceCell `elem` validMoves gs (Queen (selectPlayer (snd gs)) (snd gs) kingCell) kingCell
+    where 
+        kingCell = findOpponentKing gs
+
+newCheckDetected :: GameState -> Int -> Bool
+newCheckDetected gs 1 = straightThreatDetected gs moveVertically (findOpponentKing gs) 1 -- vertical up
+newCheckDetected gs 2 = straightThreatDetected gs moveVertically (findOpponentKing gs) (-1) -- vertical down
+newCheckDetected gs 3 = straightThreatDetected gs moveHorizontally (findOpponentKing gs) 1 -- horizontal right
+newCheckDetected gs 4 = straightThreatDetected gs moveHorizontally (findOpponentKing gs) (-1) -- horizontal left
+newCheckDetected gs 5 = diagonalThreatDetected gs moveDiagonally (findOpponentKing gs) (1, 1) -- diagonal up right
+newCheckDetected gs 6 = diagonalThreatDetected gs moveDiagonally (findOpponentKing gs) (-1, 1) -- diagonal up left
+newCheckDetected gs 7 = diagonalThreatDetected gs moveDiagonally (findOpponentKing gs) (1, -1) -- diagonal down right
+newCheckDetected gs 8 = diagonalThreatDetected gs moveDiagonally (findOpponentKing gs) (-1, -1) -- diagonal down left
+newCheckDetected gs _ = False -- invalid
+
+decipherPositionDifference :: Cell -> Cell -> (Int, Int)
+decipherPositionDifference (c1, r1) (c2, r2) = (fromEnum c2 - fromEnum c1, r2 - r1)
+
+decipherDirectionDifference :: (Int, Int) -> Int
+decipherDirectionDifference (0, n) | n > 0 = 1 -- vertical up
+                                   | n < 0 = 2 -- vertical down
+decipherDirectionDifference (n, 0) | n > 0 = 3 -- horizontal right
+                                   | n < 0 = 4 -- horizontal left
+decipherDirectionDifference (n, m) | n > 0 && m > 0 = 5 -- diagonal up right
+                                   | n < 0 && m > 0 = 6 -- diagonal up left
+                                   | n > 0 && m < 0 = 7 -- diagonal down right
+                                   | n < 0 && m < 0 = 8 -- diagonal down left
+decipherDirectionDifference _ = 0 -- invalid
+
+moveVertically :: Cell -> Int -> Cell
+moveVertically (c, r) n = (c, r + n)
+
+moveHorizontally :: Cell -> Int -> Cell
+moveHorizontally (c, r) n = (changingChar c n, r)
+
+moveDiagonally :: Cell -> (Int, Int) -> Cell
+moveDiagonally (c, r) (n, m) = (changingChar c n, r + m)
+
+straightThreatDetected :: GameState -> (Cell -> Int -> Cell) -> Cell -> Int -> Bool 
+straightThreatDetected gs moveFunc cellCheck n | not (validCell cellCheck) = False
+                                               | otherwise = case storePiece gs (moveFunc cellCheck n) of
+                                                                Right _ -> straightThreatDetected gs moveFunc (moveFunc cellCheck n) n
+                                                                Left p -> if not (belongsToCurrentPlayer gs p)
+                                                                            then False
+                                                                            else case p of
+                                                                                Rook _ _ _ -> True
+                                                                                Queen _ _ _ -> True
+                                                                                King _ _ _ -> straightThreatDetected gs moveFunc (moveFunc cellCheck n) n
+                                                                                _ -> False
+
+diagonalThreatDetected :: GameState -> (Cell -> (Int, Int) -> Cell) -> Cell -> (Int, Int) -> Bool
+diagonalThreatDetected gs moveFunc cellCheck (n, m) | not (validCell cellCheck) = False
+                                                    | otherwise = case storePiece gs (moveFunc cellCheck (n, m)) of
+                                                                Right _ -> diagonalThreatDetected gs moveFunc (moveFunc cellCheck (n, m)) (n, m)
+                                                                Left p -> if not (belongsToCurrentPlayer gs p)
+                                                                            then False
+                                                                            else case p of
+                                                                                Bishop _ _ _ -> True
+                                                                                Queen _ _ _ -> True
+                                                                                King _ _ _ -> diagonalThreatDetected gs moveFunc (moveFunc cellCheck (n, m)) (n, m)
+                                                                                _ -> False
+
 -- king movement / castling
+-- en passant (attack)
 -- pawn promotion
+-- checkmate
 -- stalmate 
+-- gameplay loop / user input
