@@ -145,12 +145,17 @@ initial :: GameState
 initial = createGame generateGameBoard initialPositions
 
 -- Code where given a move, the game state is updated accordingly
+
+
 updateGameState :: GameState -> Cell -> Cell -> GameState
 updateGameState gs from to = if isValidMove gs from to
                                 then case pickUpPiece gs from of
-                                    (Left piece, (board', moves)) -> (if validCell to then insertPiece (board', moves+1) to piece else gs) -- If invalid cell, return the same game state
+                                    (Left piece, (board', moves)) -> (if validCell to then insertPiece (board', moves) to piece else gs) -- If invalid cell, return the same game state
                                     (Right msg, gs') -> gs -- If no piece found, return the same game state
                                 else gs -- If invalid move, return the same game state
+
+nextTurn :: GameState -> GameState
+nextTurn (board, moves) = (board, moves + 1)
 
 pickUpPiece :: GameState -> Cell -> (Either (Piece Players Moves Cell) String, GameState)
 pickUpPiece gs cell = case storePiece gs cell of
@@ -467,28 +472,28 @@ opponentKingInRow (x:xs) moves = case snd x of
                     _ -> opponentKingInRow xs moves
 
 -- Check for if a move would reult in check on your own king
-
+-- Check the opponent king as we already made the move and the turn has changed
 discoveredCheck :: GameState -> Cell -> Bool
 discoveredCheck gs pieceCell = isItInLineWithKing gs pieceCell && newCheckDetected gs direction
     where
-        kingCell = findOpponentKing gs
+        kingCell = findKing gs
         positionDifference = decipherPositionDifference kingCell pieceCell
         direction = decipherDirectionDifference positionDifference
 
 isItInLineWithKing :: GameState -> Cell -> Bool
 isItInLineWithKing gs pieceCell = pieceCell `elem` validMoves gs (Queen (selectPlayer (snd gs)) (snd gs) kingCell) kingCell
-    where 
-        kingCell = findOpponentKing gs
+    where
+        kingCell = findKing gs
 
 newCheckDetected :: GameState -> Int -> Bool
-newCheckDetected gs 1 = straightThreatDetected gs moveVertically (findOpponentKing gs) 1 -- vertical up
-newCheckDetected gs 2 = straightThreatDetected gs moveVertically (findOpponentKing gs) (-1) -- vertical down
-newCheckDetected gs 3 = straightThreatDetected gs moveHorizontally (findOpponentKing gs) 1 -- horizontal right
-newCheckDetected gs 4 = straightThreatDetected gs moveHorizontally (findOpponentKing gs) (-1) -- horizontal left
-newCheckDetected gs 5 = diagonalThreatDetected gs moveDiagonally (findOpponentKing gs) (1, 1) -- diagonal up right
-newCheckDetected gs 6 = diagonalThreatDetected gs moveDiagonally (findOpponentKing gs) (-1, 1) -- diagonal up left
-newCheckDetected gs 7 = diagonalThreatDetected gs moveDiagonally (findOpponentKing gs) (1, -1) -- diagonal down right
-newCheckDetected gs 8 = diagonalThreatDetected gs moveDiagonally (findOpponentKing gs) (-1, -1) -- diagonal down left
+newCheckDetected gs 1 = straightThreatDetected gs moveVertically (findKing gs) 1 -- vertical up
+newCheckDetected gs 2 = straightThreatDetected gs moveVertically (findKing gs) (-1) -- vertical down
+newCheckDetected gs 3 = straightThreatDetected gs moveHorizontally (findKing gs) 1 -- horizontal right
+newCheckDetected gs 4 = straightThreatDetected gs moveHorizontally (findKing gs) (-1) -- horizontal left
+newCheckDetected gs 5 = diagonalThreatDetected gs moveDiagonally (findKing gs) (1, 1) -- diagonal up right
+newCheckDetected gs 6 = diagonalThreatDetected gs moveDiagonally (findKing gs) (-1, 1) -- diagonal up left
+newCheckDetected gs 7 = diagonalThreatDetected gs moveDiagonally (findKing gs) (1, -1) -- diagonal down right
+newCheckDetected gs 8 = diagonalThreatDetected gs moveDiagonally (findKing gs) (-1, -1) -- diagonal down left
 newCheckDetected gs _ = False -- invalid
 
 decipherPositionDifference :: Cell -> Cell -> (Int, Int)
@@ -514,11 +519,11 @@ moveHorizontally (c, r) n = (changingChar c n, r)
 moveDiagonally :: Cell -> (Int, Int) -> Cell
 moveDiagonally (c, r) (n, m) = (changingChar c n, r + m)
 
-straightThreatDetected :: GameState -> (Cell -> Int -> Cell) -> Cell -> Int -> Bool 
+straightThreatDetected :: GameState -> (Cell -> Int -> Cell) -> Cell -> Int -> Bool
 straightThreatDetected gs moveFunc cellCheck n | not (validCell cellCheck) = False
                                                | otherwise = case storePiece gs (moveFunc cellCheck n) of
                                                                 Right _ -> straightThreatDetected gs moveFunc (moveFunc cellCheck n) n
-                                                                Left p -> if not (belongsToCurrentPlayer gs p)
+                                                                Left p -> if belongsToCurrentPlayer gs p
                                                                             then False
                                                                             else case p of
                                                                                 Rook _ _ _ -> True
@@ -530,13 +535,42 @@ diagonalThreatDetected :: GameState -> (Cell -> (Int, Int) -> Cell) -> Cell -> (
 diagonalThreatDetected gs moveFunc cellCheck (n, m) | not (validCell cellCheck) = False
                                                     | otherwise = case storePiece gs (moveFunc cellCheck (n, m)) of
                                                                 Right _ -> diagonalThreatDetected gs moveFunc (moveFunc cellCheck (n, m)) (n, m)
-                                                                Left p -> if not (belongsToCurrentPlayer gs p)
+                                                                Left p -> if belongsToCurrentPlayer gs p
                                                                             then False
                                                                             else case p of
                                                                                 Bishop _ _ _ -> True
                                                                                 Queen _ _ _ -> True
                                                                                 King _ _ _ -> diagonalThreatDetected gs moveFunc (moveFunc cellCheck (n, m)) (n, m)
                                                                                 _ -> False
+
+knightThreatDetected :: GameState -> Cell -> Bool
+knightThreatDetected gs cellCheck = any (isThreateningKnight gs) possibleKnightPositions
+    where
+        possibleKnightPositions = [(changingChar c 1, r + 2),
+                                   (changingChar c 2, r + 1),
+                                   (changingChar c 2, r - 1),
+                                   (changingChar c 1, r - 2),
+                                   (changingChar c (-1), r - 2),
+                                   (changingChar c (-2), r - 1),
+                                   (changingChar c (-2), r + 1),
+                                   (changingChar c (-1), r + 2)]
+        (c, r) = cellCheck
+
+isThreateningKnight :: GameState -> Cell -> Bool
+isThreateningKnight gs pos = case storePiece gs pos of
+                            Right _ -> False
+                            Left p -> if belongsToCurrentPlayer gs p
+                                        then False
+                                        else case p of
+                                            Knight _ _ _ -> True
+                                            _ -> False
+
+checkingCheck :: GameState -> Bool
+checkingCheck gs = knightThreatDetected gs kingCell || newCheckDetected gs 1 || newCheckDetected gs 2 || newCheckDetected gs 3 || newCheckDetected gs 4 || newCheckDetected gs 5 || newCheckDetected gs 6 || newCheckDetected gs 7 || newCheckDetected gs 8
+    where
+        kingCell = findKing gs
+
+-- In the process of changing vald moves to not allow for discovered check
 
 -- king movement / castling
 -- en passant (attack)
